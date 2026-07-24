@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
+
 class Settings(BaseSettings):
     # App Setting
     app_name: str = "SlotBookingApp"
@@ -18,15 +19,14 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         return (
-            f"postgrtesql+psycopg2://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
     model_config = SettingsConfigDict(
-        env_file=".env",
-        case_sensitive=False,
-        extra="ignore"
+        env_file=".env", case_sensitive=False, extra="ignore"
     )
+
 
 @lru_cache
 def get_settings() -> Settings:
