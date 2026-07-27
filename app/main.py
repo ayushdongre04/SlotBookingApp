@@ -7,10 +7,25 @@ from app.core.logging_config import setup_logging
 from app.core.middleware import RequestContextMiddleware
 from app.core.config import settings
 
+from app.core.base import Base
+from app.core.db_session import engine
+
+from app.booking import router as booking_router
+from app.slots import router as slots_router
+from app.providers import router as provider_router
+
+from app.booking.router import router as booking_router
+from app.slots.router import router as slots_router
+from app.providers.router import router as provider_router
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     yield
+
+    await engine.dispose()
 
 
 def create_application() -> FastAPI:
@@ -22,13 +37,17 @@ def create_application() -> FastAPI:
         lifespan=lifespan,
         # In production, disable docs exposure
         docs_url="/docs" if settings.debug else None,
-        redoc_url="/redoc" if settings.debug else None,
     )
 
     app.add_middleware(RequestContextMiddleware)
 
     # Register exception handlers
     register_exception_handler(app)
+
+    # Register routers
+    app.include_router(booking_router)
+    app.include_router(slots_router)
+    app.include_router(provider_router)
 
     # Health check — no auth, no DB, always responds
     @app.get("/health", tags=["Health"])
