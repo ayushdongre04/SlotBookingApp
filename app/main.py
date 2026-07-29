@@ -8,16 +8,9 @@ from app.core.logging_config import setup_logging
 from app.core.middleware import RequestContextMiddleware
 from app.core.config import settings
 
-from app.core.base import Base
-from app.core.db_session import engine
-
 from app.booking import router as booking_router
 from app.slots import router as slots_router
 from app.providers import router as provider_router
-
-from app.booking.router import router as booking_router
-from app.slots.router import router as slots_router
-from app.providers.router import router as provider_router
 
 
 @asynccontextmanager
