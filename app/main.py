@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -63,9 +64,12 @@ def create_application() -> FastAPI:
         checks = {"database": False}
 
         try:
-            async with AsyncSessionLocal() as session:
-                await session.execute(text("SELECT 1"))
+            async with asyncio.timeout(5):
+                async with AsyncSessionLocal() as session:
+                    await session.execute(text("SELECT 1"))
             checks["database"] = True
+        except TimeoutError:
+            checks["database_error"] = "Database health check timed out"
         except Exception as e:
             checks["database_error"] = str(e)
 
