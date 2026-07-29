@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String
+from sqlalchemy import DateTime, Enum, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.base import Base
@@ -16,8 +16,12 @@ class SlotStatus(str, enum.Enum):
 
 class Slot(Base):
     __tablename__ = "slots"
+    __table_args__ = (
+        Index("ix_slots_tenant_id", "tenant_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     provider_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("providers.id"), nullable=False
     )

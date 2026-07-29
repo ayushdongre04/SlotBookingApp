@@ -15,12 +15,13 @@ from app.booking.model import Booking, BookingStatus
 logger = logging.getLogger(__name__)
 
 
-async def create_booking(db: AsyncSession, payload: BookingCreate) -> Booking:
+async def create_booking(db: AsyncSession, payload: BookingCreate, tenant_id: uuid.UUID) -> Booking:
     """
     Create a new booking in the database.
     Args:
         db (AsyncSession): The SQLAlchemy session to use for the database operation.
         payload (BookingCreate): The schema containing the booking data to create.
+        tenant_id (uuid.UUID): The ID of the tenant to which the booking belongs.
     Returns:
         Booking: The newly created booking instance.
     Raises:
@@ -29,7 +30,10 @@ async def create_booking(db: AsyncSession, payload: BookingCreate) -> Booking:
     """
     # Check if the slot exists
     slot_result = await db.execute(
-        select(Slot).where(Slot.id == payload.slot_id).with_for_update()
+        select(Slot).where(
+            Slot.id == payload.slot_id,
+            Slot.tenant_id == tenant_id
+            ).with_for_update()
     )
     slot = slot_result.scalar_one_or_none()
 
@@ -44,6 +48,7 @@ async def create_booking(db: AsyncSession, payload: BookingCreate) -> Booking:
 
     # Create the booking
     booking = Booking(
+        tenant_id=tenant_id,
         slot_id=payload.slot_id,
         customer_name=payload.customer_name,
         customer_email=payload.customer_email,
@@ -65,12 +70,13 @@ async def create_booking(db: AsyncSession, payload: BookingCreate) -> Booking:
     return booking
 
 
-async def cancel_booking(db: AsyncSession, booking_id: uuid.UUID) -> Booking:
+async def cancel_booking(db: AsyncSession, booking_id: uuid.UUID, tenant_id: uuid.UUID) -> Booking:
     """
     Cancel an existing booking in the database.
     Args:
         db (AsyncSession): The SQLAlchemy session to use for the database operation.
         booking_id (uuid.UUID): The ID of the booking to cancel.
+        tenant_id (uuid.UUID): The ID of the tenant to which the booking belongs.
     Returns:
         Booking: The updated booking instance with status set to CANCELLED.
     Raises:
@@ -82,7 +88,7 @@ async def cancel_booking(db: AsyncSession, booking_id: uuid.UUID) -> Booking:
     stmt = (
         select(Booking)
         .options(selectinload(Booking.slot))
-        .where(Booking.id == booking_id)
+        .where(Booking.id == booking_id, Booking.tenant_id == tenant_id)
         .with_for_update()
     )
 
@@ -112,20 +118,20 @@ async def cancel_booking(db: AsyncSession, booking_id: uuid.UUID) -> Booking:
     return booking
 
 
-async def get_all_bookings(db: AsyncSession) -> List[Booking]:
+async def get_all_bookings(db: AsyncSession, tenant_id: uuid.UUID) -> List[Booking]:
     """Retrieve all bookings with their related slots."""
-    stmt = select(Booking).options(selectinload(Booking.slot))
+    stmt = select(Booking).options(selectinload(Booking.slot)).where(Booking.tenant_id == tenant_id)
     result = await db.execute(stmt)
     bookings = result.scalars().all()
     return bookings
 
 
-async def get_booking_by_id(db: AsyncSession, booking_id: uuid.UUID) -> Booking:
+async def get_booking_by_id(db: AsyncSession, booking_id: uuid.UUID, tenant_id: uuid.UUID) -> Booking:
     """Retrieve a single booking by ID, raising NotFoundError if missing."""
     stmt = (
         select(Booking)
         .options(selectinload(Booking.slot))
-        .where(Booking.id == booking_id)
+        .where(Booking.id == booking_id, Booking.tenant_id == tenant_id)
     )
     result = await db.execute(stmt)
     booking = result.scalars().first()

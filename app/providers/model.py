@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, String
+from sqlalchemy import DateTime, String, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.base import Base
@@ -9,8 +9,14 @@ from app.core.base import Base
 
 class Provider(Base):
     __tablename__ = "providers"
+    __table_args__ = (
+        # Every list/lookup query filters by tenant_id first — index it
+        # so that filter doesn't become a full table scan as data grows.
+        Index("ix_providers_tenant_id", "tenant_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

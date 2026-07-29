@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.booking import service
 from app.booking.schemas import BookingResponse, BookingCreate
 from app.core.db_session import get_db
+from app.core.tenancy import get_current_tenant_id
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
@@ -14,15 +15,17 @@ router = APIRouter(prefix="/bookings", tags=["bookings"])
 @router.get("", response_model=List[BookingResponse])
 async def get_all_bookings(
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
 ):
     """
     Fetch all bookings.
     Args:
         db (AsyncSession): The SQLAlchemy session to use for the database operation.
+        tenant_id (uuid.UUID): The ID of the tenant to which the bookings belong.
     Returns:
         List[BookingResponse]: A list of all bookings.
     """
-    bookings = await service.get_all_bookings(db)
+    bookings = await service.get_all_bookings(db, tenant_id)
     return bookings
 
 
@@ -30,16 +33,18 @@ async def get_all_bookings(
 async def get_booking_by_id(
     booking_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
 ):
     """
     Fetch a booking by ID.
     Args:
         booking_id (uuid.UUID): The ID of the booking to fetch.
         db (AsyncSession): The SQLAlchemy session to use for the database operation.
+        tenant_id (uuid.UUID): The ID of the tenant to which the booking belongs.
     Returns:
         BookingResponse: The booking instance.
     """
-    booking = await service.get_booking_by_id(db, booking_id)
+    booking = await service.get_booking_by_id(db, booking_id, tenant_id)
     return booking
 
 
@@ -47,16 +52,18 @@ async def get_booking_by_id(
 async def create_booking(
     payload: BookingCreate,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
 ):
     """
     Create a new booking.
     Args:
         payload (BookingResponse): The schema containing the booking data to create.
         db (AsyncSession): The SQLAlchemy session to use for the database operation.
+        tenant_id (uuid.UUID): The ID of the tenant to which the booking belongs.
     Returns:
         BookingResponse: The newly created booking instance.
     """
-    booking = await service.create_booking(db, payload)
+    booking = await service.create_booking(db, payload, tenant_id)
     return booking
 
 
@@ -64,14 +71,16 @@ async def create_booking(
 async def cancel_booking(
     booking_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_current_tenant_id),
 ):
     """
     Cancel an existing booking.
     Args:
         booking_id (uuid.UUID): The ID of the booking to cancel.
         db (AsyncSession): The SQLAlchemy session to use for the database operation.
+        tenant_id (uuid.UUID): The ID of the tenant to which the booking belongs.
     Returns:
         BookingResponse: The canceled booking instance.
     """
-    booking = await service.cancel_booking(db, booking_id)
+    booking = await service.cancel_booking(db, booking_id, tenant_id)
     return booking

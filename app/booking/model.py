@@ -30,9 +30,11 @@ class Booking(Base):
             postgresql_where=text("status!='CANCELLED'"), # postgres store the BookingStatus Key names
             # postgresql_where=(status != BookingStatus.CANCELLED)
         ),
+        Index("ix_bookings_tenant_id", "tenant_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     slot_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("slots.id"), nullable=False
     )

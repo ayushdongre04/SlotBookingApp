@@ -20,3 +20,4 @@ class SlotResponseSchema(BaseModel):
     start_time: datetime
     end_time: datetime
     status: SlotStatus
+    tenant_id: uuid.UUID
