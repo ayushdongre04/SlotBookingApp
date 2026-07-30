@@ -8,9 +8,9 @@ from app.core.logging_config import setup_logging
 from app.core.middleware import RequestContextMiddleware
 from app.core.config import settings
 
-from app.booking import router as booking_router
-from app.slots import router as slots_router
-from app.providers import router as provider_router
+from app.booking.router import router as booking_router
+from app.slots.router import router as slots_router
+from app.providers.router import router as provider_router
 
 
 @asynccontextmanager
@@ -53,8 +53,9 @@ def create_application() -> FastAPI:
     async def readiness_check():
         from sqlalchemy import text
         from app.core.db_session import AsyncSessionLocal
+        from redis.asyncio import from_url as redis_from_url
 
-        checks = {"database": False}
+        checks = {"database": False, "redis": False}
 
         try:
             async with asyncio.timeout(5):
@@ -65,6 +66,17 @@ def create_application() -> FastAPI:
             checks["database_error"] = "Database health check timed out"
         except Exception as e:
             checks["database_error"] = str(e)
+
+        try:
+            async with asyncio.timeout(5):
+                redis_client = redis_from_url(settings.redis_url)
+                await redis_client.ping()
+                await redis_client.aclose()
+            checks["redis"] = True
+        except TimeoutError:
+            checks["redis_error"] = "Redis health check timed out"
+        except Exception as e:
+            checks["redis_error"] = str(e)
 
         all_healthy = all(v is True for v in checks.values())
         return {

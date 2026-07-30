@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 
@@ -11,6 +12,10 @@ from app.booking.schemas import BookingCreate
 from app.core.exceptions import NotFoundError, ConflictError
 from app.slots.model import Slot, SlotStatus
 from app.booking.model import Booking, BookingStatus
+from app.booking.tasks import (
+    send_booking_confirmation,
+    send_booking_cancellation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +72,28 @@ async def create_booking(db: AsyncSession, payload: BookingCreate, tenant_id: uu
         extra={"ctx_booking_id": booking.id, "ctx_slot_id": slot.id},
     )
 
+    try:
+        # Celery's .delay() is a SYNCHRONOUS, blocking call (it publishes to
+        # Redis over a plain socket) — calling it directly here would block
+        # the async event loop for that duration. Running it in a worker
+        # thread via anyio / asyncio keeps this coroutine non-blocking.
+        # await anyio.to_thread.run_sync(
+        #     send_booking_confirmation.delay, str(booking.id), booking.customer_email
+        # )
+        await asyncio.to_thread(
+            send_booking_confirmation.delay,
+            str(booking.id),
+            booking.customer_email
+        )
+    except Exception:
+        # Booking already committed successfully — a notification enqueue
+        # failure should never fail the API response. Logging it as a warning.
+        logger.warning(
+            "failed to enqueue booking confirmation",
+            exc_info=True,
+            extra={"ctx_booking_id": str(booking.id)},
+        )
+
     return booking
 
 
@@ -109,6 +136,21 @@ async def cancel_booking(db: AsyncSession, booking_id: uuid.UUID, tenant_id: uui
     booking.slot.status = SlotStatus.AVAILABLE  # Update the slot status to available
     await db.commit()
     await db.refresh(booking)
+
+    try:
+        await asyncio.to_thread(
+            send_booking_cancellation.delay,
+            str(booking.id),
+            booking.customer_email
+        )
+    except Exception:
+        # Booking already cancelled successfully — a notification enqueue
+        # failure should never fail the API response. Logging it as a warning.
+        logger.warning(
+            "failed to enqueue booking cancellation",
+            exc_info=True,
+            extra={"ctx_booking_id": str(booking.id)},
+        )
 
     logger.info(
         f"Booking cancelled successfully",
