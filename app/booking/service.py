@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import uuid
 
@@ -9,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from typing import List
 
 from app.booking.schemas import BookingCreate
+from app.core.redis_client import redis_client, slot_events_channel
 from app.core.exceptions import NotFoundError, ConflictError
 from app.slots.model import Slot, SlotStatus
 from app.booking.model import Booking, BookingStatus
@@ -18,6 +20,35 @@ from app.booking.tasks import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _publish_slot_event(tenant_id: uuid.UUID, slot_id: uuid.UUID, status: SlotStatus) -> None:
+    """Broadcasts a slot-availability change to any SSE connection
+    subscribed to this tenant's channel, on ANY worker process — Redis
+    Pub/Sub is what makes this visible across workers, not just within
+    the process that handled this request.
+
+    Deliberately isolated in its own try/except: a Redis Pub/Sub outage
+    should degrade real-time UI updates, not fail the booking/cancel
+    request that triggered it. SSE is a nice-to-have on top of a
+    correct booking, not a dependency of one.
+    """
+    try:
+        payload = {
+            "slot_id": str(slot_id),
+            "status": status.value,
+        }
+
+        await redis_client.publish(
+            slot_events_channel(tenant_id=tenant_id),
+            json.dumps(payload)
+        )
+    except Exception:
+        logger.warning(
+            "failed to publish slot event",
+            exc_info=True,
+            extra={"ctx_slot_id": str(slot_id), "ctx_status": status.value}
+        )
 
 
 async def create_booking(db: AsyncSession, payload: BookingCreate, tenant_id: uuid.UUID) -> Booking:
@@ -67,6 +98,10 @@ async def create_booking(db: AsyncSession, payload: BookingCreate, tenant_id: uu
     await db.commit()
     await db.refresh(booking)
 
+    # Booking already committed successfully at this point — neither of
+    # the two calls below should be able to turn a successful booking
+    # into a failed API response if Redis/Celery has an issue.
+
     logger.info(
         "Booking created successfully",
         extra={"ctx_booking_id": booking.id, "ctx_slot_id": slot.id},
@@ -93,6 +128,11 @@ async def create_booking(db: AsyncSession, payload: BookingCreate, tenant_id: uu
             exc_info=True,
             extra={"ctx_booking_id": str(booking.id)},
         )
+
+    await _publish_slot_event(
+        tenant_id = tenant_id,
+        slot_id = slot.id,
+        status = SlotStatus.BOOKED)
 
     return booking
 
@@ -137,6 +177,11 @@ async def cancel_booking(db: AsyncSession, booking_id: uuid.UUID, tenant_id: uui
     await db.commit()
     await db.refresh(booking)
 
+    logger.info(
+        f"Booking cancelled successfully",
+        extra={"ctx_booking_id": booking.id, "ctx_slot_id": booking.slot.id},
+    )
+
     try:
         await asyncio.to_thread(
             send_booking_cancellation.delay,
@@ -152,9 +197,10 @@ async def cancel_booking(db: AsyncSession, booking_id: uuid.UUID, tenant_id: uui
             extra={"ctx_booking_id": str(booking.id)},
         )
 
-    logger.info(
-        f"Booking cancelled successfully",
-        extra={"ctx_booking_id": booking.id, "ctx_slot_id": booking.slot.id},
+    await _publish_slot_event(
+        tenant_id = tenant_id,
+        slot_id = booking.slot.id,
+        status = SlotStatus.AVAILABLE
     )
 
     return booking
