@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_db: int = 0
 
+    # JWT
+    access_token_expire_minutes: int = 1440
+
     @property
     def database_url(self) -> str:
         return (

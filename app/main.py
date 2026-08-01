@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.booking.router import router as booking_router
 from app.slots.router import router as slots_router
 from app.providers.router import router as provider_router
+from app.auth.router import router as auth_router
 
 
 @asynccontextmanager
@@ -38,6 +39,7 @@ def create_application() -> FastAPI:
     app.include_router(booking_router)
     app.include_router(slots_router)
     app.include_router(provider_router)
+    app.include_router(auth_router)
 
     # Health check — no auth, no DB, always responds
     @app.get("/health", tags=["Health"])

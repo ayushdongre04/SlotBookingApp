@@ -12,3 +12,5 @@ httpx==0.28.1
 alembic==1.18.5
 celery[redis]==5.4.0
 redis==5.0.8
+pyjwt==2.9.0
+passlib[argon2]==1.7.4

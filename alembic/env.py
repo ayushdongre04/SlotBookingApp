@@ -41,6 +41,8 @@ from app.core.config import settings
 from app.booking import model as booking_models  # noqa: F401
 from app.providers import model as provider_models  # noqa: F401
 from app.slots import model as slot_models  # noqa: F401
+from app.tenants import model as tenant_models  # noqa: F401
+from app.auth import model as auth_models  # noqa: F401
 
 # Alembic configuration object.
 config = context.config
