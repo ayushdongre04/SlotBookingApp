@@ -5,13 +5,15 @@ from datetime import datetime, UTC
 import platform
 import selectors
 
+from redis.asyncio import from_url
 from sqlalchemy import select
 
 from app.core.celery_app import celery_app
-from app.core.redis_client import redis_client, slot_events_channel
+from app.core.redis_client import slot_events_channel
 from app.core.db_session import AsyncSessionLocal
 from app.booking.tasks import send_booking_confirmation, send_booking_cancellation
 from app.outbox.model import OutboxEvent, OutboxEventStatus
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +21,14 @@ BATCH_SIZE = 20
 MAX_ATTEMPTS = 5
 
 
-async def _dispatch(event: OutboxEvent) -> None:
+async def _dispatch(event: OutboxEvent, redis_conn) -> None:
     payload = event.payload
 
     if event.event_type == "booking_confirmed":
         send_booking_confirmation.delay(
             payload["booking_id"], payload["customer_email"]
         )
-        await redis_client.publish(
+        await redis_conn.publish(
             slot_events_channel(event.tenant_id),
             json.dumps({"slot_id": str(payload["slot_id"]), "status": "booked"}),
         )
@@ -34,7 +36,7 @@ async def _dispatch(event: OutboxEvent) -> None:
         send_booking_cancellation.delay(
             payload["booking_id"], payload["customer_email"]
         )
-        await redis_client.publish(
+        await redis_conn.publish(
             slot_events_channel(event.tenant_id),
             json.dumps({"slot_id": str(payload["slot_id"]), "status": "available"}),
         )
@@ -46,47 +48,51 @@ async def _process_batch() -> dict:
     # FOR UPDATE SKIP LOCKED: if this relay ever runs as more than
     # one process/replica, two relays racing for the same batch
     # don't block each other OR double-process the same row.
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(OutboxEvent)
-            .where(OutboxEvent.status == OutboxEventStatus.PENDING)
-            .order_by(OutboxEvent.created_at)
-            .limit(BATCH_SIZE)
-            .with_for_update(skip_locked=True)
-        )
-        events = result.scalars().all()
+    redis_conn = from_url(settings.redis_url, decode_responses=True)
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(OutboxEvent)
+                .where(OutboxEvent.status == OutboxEventStatus.PENDING)
+                .order_by(OutboxEvent.created_at)
+                .limit(BATCH_SIZE)
+                .with_for_update(skip_locked=True)
+            )
+            events = result.scalars().all()
 
-        processed, failed = 0, 0
-        for event in events:
-            try:
-                await _dispatch(event)
-                event.status = OutboxEventStatus.PROCESSED
-                event.processed_at = datetime.now(UTC)
-                processed += 1
-            except Exception as exc:
-                event.attempts += 1
-                event.last_error = str(exc)[:500]
-                if event.attempts >= MAX_ATTEMPTS:
-                    event.status = OutboxEventStatus.FAILED
-                    logger.error(
-                        "outbox event exceeded max attempts, giving up",
-                        extra={
-                            "ctx_event_id": str(event.id),
-                            "ctx_event_type": event.event_type,
-                        },
-                    )
-                    failed += 1
-                else:
-                    logger.warning(
-                        "outbox event dispatch failed, will retry",
-                        extra={
-                            "ctx_event_id": str(event.id),
-                            "ctx_attempts": event.attempts,
-                            "ctx_error": str(exc),
-                        },
-                    )
-        await db.commit()
-        return {"processed": processed, "failed": failed, "total": len(events)}
+            processed, failed = 0, 0
+            for event in events:
+                try:
+                    await _dispatch(event, redis_conn)
+                    event.status = OutboxEventStatus.PROCESSED
+                    event.processed_at = datetime.now(UTC)
+                    processed += 1
+                except Exception as exc:
+                    event.attempts += 1
+                    event.last_error = str(exc)[:500]
+                    if event.attempts >= MAX_ATTEMPTS:
+                        event.status = OutboxEventStatus.FAILED
+                        logger.error(
+                            "outbox event exceeded max attempts, giving up",
+                            extra={
+                                "ctx_event_id": str(event.id),
+                                "ctx_event_type": event.event_type,
+                            },
+                        )
+                        failed += 1
+                    else:
+                        logger.warning(
+                            "outbox event dispatch failed, will retry",
+                            extra={
+                                "ctx_event_id": str(event.id),
+                                "ctx_attempts": event.attempts,
+                                "ctx_error": str(exc),
+                            },
+                        )
+            await db.commit()
+            return {"processed": processed, "failed": failed, "total": len(events)}
+    finally:
+        await redis_conn.close()
 
 def run_async(coro):
     """
