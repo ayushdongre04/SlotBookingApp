@@ -30,7 +30,7 @@ class JSONFormatter(logging.Formatter):
         for key, value in record.__dict__.items():
             if key.startswith("ctx_"):
                 payload[key[4:]] = value
-        return json.dumps(payload)
+        return json.dumps(payload, default=str)
 
 def setup_logging(level: str = "INFO") -> None:
     handler = logging.StreamHandler(sys.stdout)

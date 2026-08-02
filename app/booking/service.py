@@ -1,5 +1,3 @@
-import asyncio
-import json
 import logging
 import uuid
 
@@ -10,45 +8,13 @@ from sqlalchemy.orm import selectinload
 from typing import List
 
 from app.booking.schemas import BookingCreate
-from app.core.redis_client import redis_client, slot_events_channel
 from app.core.exceptions import NotFoundError, ConflictError
+from app.outbox.service import enqueue_event
 from app.slots.model import Slot, SlotStatus
 from app.booking.model import Booking, BookingStatus
-from app.booking.tasks import (
-    send_booking_confirmation,
-    send_booking_cancellation,
-)
+
 
 logger = logging.getLogger(__name__)
-
-
-async def _publish_slot_event(tenant_id: uuid.UUID, slot_id: uuid.UUID, status: SlotStatus) -> None:
-    """Broadcasts a slot-availability change to any SSE connection
-    subscribed to this tenant's channel, on ANY worker process — Redis
-    Pub/Sub is what makes this visible across workers, not just within
-    the process that handled this request.
-
-    Deliberately isolated in its own try/except: a Redis Pub/Sub outage
-    should degrade real-time UI updates, not fail the booking/cancel
-    request that triggered it. SSE is a nice-to-have on top of a
-    correct booking, not a dependency of one.
-    """
-    try:
-        payload = {
-            "slot_id": str(slot_id),
-            "status": status.value,
-        }
-
-        await redis_client.publish(
-            slot_events_channel(tenant_id=tenant_id),
-            json.dumps(payload)
-        )
-    except Exception:
-        logger.warning(
-            "failed to publish slot event",
-            exc_info=True,
-            extra={"ctx_slot_id": str(slot_id), "ctx_status": status.value}
-        )
 
 
 async def create_booking(db: AsyncSession, payload: BookingCreate, tenant_id: uuid.UUID) -> Booking:
@@ -95,6 +61,21 @@ async def create_booking(db: AsyncSession, payload: BookingCreate, tenant_id: uu
 
     # Update the slot status to booked
     slot.status = SlotStatus.BOOKED
+
+    # Enqueue an outbox event for the booking confirmation. The outbox event is added
+    # to the session but not committed yet. The caller must commit after adding both
+    # the booking and the outbox event to ensure atomicity.
+    enqueue_event(
+        db,
+        tenant_id=tenant_id,
+        event_type="booking_confirmed",
+        payload={
+            "booking_id": str(booking.id),
+            "slot_id": str(slot.id),
+            "customer_email": booking.customer_email,
+        },
+    )
+
     await db.commit()
     await db.refresh(booking)
 
@@ -106,33 +87,6 @@ async def create_booking(db: AsyncSession, payload: BookingCreate, tenant_id: uu
         "Booking created successfully",
         extra={"ctx_booking_id": booking.id, "ctx_slot_id": slot.id},
     )
-
-    try:
-        # Celery's .delay() is a SYNCHRONOUS, blocking call (it publishes to
-        # Redis over a plain socket) — calling it directly here would block
-        # the async event loop for that duration. Running it in a worker
-        # thread via anyio / asyncio keeps this coroutine non-blocking.
-        # await anyio.to_thread.run_sync(
-        #     send_booking_confirmation.delay, str(booking.id), booking.customer_email
-        # )
-        await asyncio.to_thread(
-            send_booking_confirmation.delay,
-            str(booking.id),
-            booking.customer_email
-        )
-    except Exception:
-        # Booking already committed successfully — a notification enqueue
-        # failure should never fail the API response. Logging it as a warning.
-        logger.warning(
-            "failed to enqueue booking confirmation",
-            exc_info=True,
-            extra={"ctx_booking_id": str(booking.id)},
-        )
-
-    await _publish_slot_event(
-        tenant_id = tenant_id,
-        slot_id = slot.id,
-        status = SlotStatus.BOOKED)
 
     return booking
 
@@ -174,33 +128,24 @@ async def cancel_booking(db: AsyncSession, booking_id: uuid.UUID, tenant_id: uui
 
     booking.status = BookingStatus.CANCELLED
     booking.slot.status = SlotStatus.AVAILABLE  # Update the slot status to available
+
+    enqueue_event(
+        db,
+        tenant_id=tenant_id,
+        event_type="booking_cancelled",
+        payload={
+            "booking_id": str(booking.id),
+            "slot_id": str(booking.slot.id),
+            "customer_email": booking.customer_email,
+        },
+    )
+
     await db.commit()
     await db.refresh(booking)
 
     logger.info(
         f"Booking cancelled successfully",
         extra={"ctx_booking_id": booking.id, "ctx_slot_id": booking.slot.id},
-    )
-
-    try:
-        await asyncio.to_thread(
-            send_booking_cancellation.delay,
-            str(booking.id),
-            booking.customer_email
-        )
-    except Exception:
-        # Booking already cancelled successfully — a notification enqueue
-        # failure should never fail the API response. Logging it as a warning.
-        logger.warning(
-            "failed to enqueue booking cancellation",
-            exc_info=True,
-            extra={"ctx_booking_id": str(booking.id)},
-        )
-
-    await _publish_slot_event(
-        tenant_id = tenant_id,
-        slot_id = booking.slot.id,
-        status = SlotStatus.AVAILABLE
     )
 
     return booking

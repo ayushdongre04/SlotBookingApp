@@ -43,6 +43,7 @@ from app.providers import model as provider_models  # noqa: F401
 from app.slots import model as slot_models  # noqa: F401
 from app.tenants import model as tenant_models  # noqa: F401
 from app.auth import model as auth_models  # noqa: F401
+from app.outbox import model as outbox_models  # noqa: F401
 
 # Alembic configuration object.
 config = context.config
