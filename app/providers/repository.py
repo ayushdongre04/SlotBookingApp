@@ -30,7 +30,7 @@ async def create_provider(
     return provider
 
 
-async def get_provider_by_id(db: AsyncSession, provider_id: uuid.UUID, tenant_id: uuid.UUID) -> Provider | None:
+async def get_by_id_and_tenant(db: AsyncSession, provider_id: uuid.UUID, tenant_id: uuid.UUID) -> Provider | None:
     """
     Retrieve a provider from the database by its ID.
     Args:

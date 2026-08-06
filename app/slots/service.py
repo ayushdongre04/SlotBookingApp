@@ -4,10 +4,12 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.providers.model import Provider
+from app.slots import repository
 from app.slots.model import Slot, SlotStatus
 from app.slots.schemas import SlotCreateSchema
+from app.providers import repository as providers_repository
 
 logger = logging.getLogger(__name__)
 
@@ -25,14 +27,15 @@ async def create_slot_service(
     Returns:
         Slot: The newly created slot instance.
     """
+    if slot_create.end_time <= slot_create.start_time:
+        raise ValidationError("end_time must be after start_time")
 
-    provider_result = await db.execute(
-        select(Provider).where(
-            Provider.id == slot_create.provider_id,
-            Provider.tenant_id == tenant_id
-        )
+    provider = await providers_repository.get_by_id_and_tenant(
+        db=db,
+        provider_id=slot_create.provider_id,
+        tenant_id=tenant_id
     )
-    provider = provider_result.scalar_one_or_none()
+
     if not provider:
         raise NotFoundError(
             f"Provider with ID {slot_create.provider_id} not found."
@@ -45,7 +48,7 @@ async def create_slot_service(
         status=SlotStatus.AVAILABLE,
         tenant_id=tenant_id,
     )
-    db.add(slot)
+    await repository.add(db, slot)
     await db.flush()  # Flush to get the ID assigned by the database
     await db.refresh(slot)  # Refresh to get the latest state from the database
     await db.commit()
@@ -66,9 +69,7 @@ async def get_slot_by_id_service(
     Returns:
         Slot | None: The slot instance if found, otherwise None.
     """
-    res = await db.execute(select(Slot).where(Slot.id == slot_id, Slot.tenant_id == tenant_id))
-    logger.info(f"Retrieving slot with ID: {slot_id}")
-    result = res.scalar_one_or_none()
+    result = await repository.get_by_id_and_tenant(db=db, slot_id=slot_id, tenant_id=tenant_id)
 
     if not result:
         raise NotFoundError(f"Slot with ID {slot_id} not found.")
@@ -88,8 +89,7 @@ async def get_all_slots_service(
     Returns:
         list[Slot]: A list of all slot instances.
     """
-    result = await db.execute(select(Slot).where(Slot.tenant_id == tenant_id))
-    return result.scalars().all()
+    return await repository.list_all_by_tenant(db=db, tenant_id=tenant_id)
 
 
 async def get_available_slots_service(
@@ -104,8 +104,4 @@ async def get_available_slots_service(
     Returns:
         list[Slot]: A list of all available slot instances.
     """
-    result = await db.execute(select(Slot).where(
-        Slot.status == SlotStatus.AVAILABLE,
-        Slot.tenant_id == tenant_id
-    ))
-    return result.scalars().all()
+    return await repository.list_available_by_tenant(db, tenant_id)

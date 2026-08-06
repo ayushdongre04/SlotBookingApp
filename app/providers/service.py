@@ -34,7 +34,7 @@ async def get_provider_by_id_service(
     tenant_id: uuid.UUID,
 ) -> Provider | None:
 
-    provider = await repository.get_provider_by_id(
+    provider = await repository.get_by_id_and_tenant(
         db,
         provider_id,
         tenant_id

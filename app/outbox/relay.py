@@ -8,6 +8,7 @@ import selectors
 from redis.asyncio import from_url
 from sqlalchemy import select
 
+from app.outbox import repository
 from app.core.celery_app import celery_app
 from app.core.redis_client import slot_events_channel
 from app.core.db_session import AsyncSessionLocal
@@ -51,14 +52,7 @@ async def _process_batch() -> dict:
     redis_conn = from_url(settings.redis_url, decode_responses=True)
     try:
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(OutboxEvent)
-                .where(OutboxEvent.status == OutboxEventStatus.PENDING)
-                .order_by(OutboxEvent.created_at)
-                .limit(BATCH_SIZE)
-                .with_for_update(skip_locked=True)
-            )
-            events = result.scalars().all()
+            events = await repository.get_pending_batch_for_update(db, BATCH_SIZE)
 
             processed, failed = 0, 0
             for event in events:

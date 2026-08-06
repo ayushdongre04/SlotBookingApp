@@ -47,7 +47,12 @@ async def slot_events_stream(request: Request, tenant_id: uuid.UUID) -> AsyncGen
                 continue
 
             yield f"event: slot_update\ndata: {message['data']}\n\n"
-
+    except Exception:
+        logger.error(
+            "SSE stream failed",
+            exc_info=True,
+            extra={"ctx_tenant_id": str(tenant_id)},
+        )
     finally:
         await pubsub.unsubscribe(channel)
         await pubsub.aclose()
